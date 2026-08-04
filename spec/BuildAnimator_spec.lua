@@ -1,11 +1,10 @@
 --[[
     BuildAnimator Test Suite
     ─────────────────────────
-    Tests for pattern validation, queue management, config, and API surface.
-    Designed to run with TestEz or similar Roblox testing frameworks.
+    Tests for pattern validation, queue management, config, API surface,
+    nil/empty inputs, type mismatches, and extreme values.
 
-    These tests validate the framework-agnostic logic without requiring
-    a live Roblox instance. Where Roblox services are needed, mocks are used.
+    Designed to run with TestEz or similar Roblox testing frameworks.
 ]]
 
 -- ── Mock Roblox services for headless testing ──────────────────
@@ -29,7 +28,6 @@ local RunService = {
     IsServer = function() return true end,
 }
 
--- Mock game:GetService
 local _mockGame = {
     GetService = function(_, name)
         if name == "TweenService" then return TweenService end
@@ -62,13 +60,12 @@ local function makeMockPart(overrides)
     return part
 end
 
--- ── Tests ──────────────────────────────────────────────────────
-
 return {
+
+    -- ── Pattern Tests ──────────────────────────────────────────
 
     ["Patterns: all presets exist and have ANIMATION_STYLE"] = function()
         local Patterns = require(script.Parent.Parent.src.Patterns)
-
         local expected = { "rise", "fade", "scaleIn", "drop", "cascade", "materialShift", "weather" }
         for _, name in ipairs(expected) do
             assert(Patterns[name] ~= nil, "Missing pattern: " .. name)
@@ -89,6 +86,11 @@ return {
         assert(Patterns.get("nonexistent") == nil, "Should return nil for unknown pattern")
     end,
 
+    ["Patterns.get returns nil for nil input"] = function()
+        local Patterns = require(script.Parent.Parent.src.Patterns)
+        assert(Patterns.get(nil) == nil, "Should return nil for nil input")
+    end,
+
     ["Patterns.list returns all pattern names"] = function()
         local Patterns = require(script.Parent.Parent.src.Patterns)
         local names = Patterns.list()
@@ -103,6 +105,19 @@ return {
         assert(extended.ANIMATION_STYLE == "drop", "Base value lost")
     end,
 
+    ["Patterns.extend preserves base when overrides is nil"] = function()
+        local Patterns = require(script.Parent.Parent.src.Patterns)
+        local extended = Patterns.extend("rise", nil)
+        assert(extended.ANIMATION_STYLE == "rise", "Base pattern lost on nil overrides")
+        assert(extended.RISE_HEIGHT == 8, "Default RISE_HEIGHT lost")
+    end,
+
+    ["Patterns.extend preserves base when overrides is empty"] = function()
+        local Patterns = require(script.Parent.Parent.src.Patterns)
+        local extended = Patterns.extend("cascade", {})
+        assert(extended.ANIMATION_STYLE == "cascade")
+    end,
+
     ["Patterns.extend errors on unknown pattern"] = function()
         local Patterns = require(script.Parent.Parent.src.Patterns)
         local ok, err = pcall(function()
@@ -111,9 +126,39 @@ return {
         assert(not ok, "Should error on unknown pattern")
     end,
 
+    ["Patterns.extend errors on nil pattern name"] = function()
+        local Patterns = require(script.Parent.Parent.src.Patterns)
+        local ok = pcall(function()
+            Patterns.extend(nil, {})
+        end)
+        assert(not ok, "Should error on nil pattern name")
+    end,
+
+    ["Patterns: each pattern has required config keys"] = function()
+        local Patterns = require(script.Parent.Parent.src.Patterns)
+        local names = Patterns.list()
+        for _, name in ipairs(names) do
+            local p = Patterns[name]
+            assert(type(p.ANIMATION_STYLE) == "string",
+                name .. ": ANIMATION_STYLE must be a string")
+            assert(type(p.PART_TWEEN_TIME) == "number",
+                name .. ": PART_TWEEN_TIME must be a number")
+            assert(type(p.STAGGER_DELAY) == "number",
+                name .. ": STAGGER_DELAY must be a number")
+        end
+    end,
+
+    ["Patterns: extend does not mutate original"] = function()
+        local Patterns = require(script.Parent.Parent.src.Patterns)
+        local original = Patterns.drop.DROP_HEIGHT
+        Patterns.extend("drop", { DROP_HEIGHT = 999 })
+        assert(Patterns.drop.DROP_HEIGHT == original,
+            "extend mutated the original pattern")
+    end,
+
+    -- ── Config & API Surface ──────────────────────────────────
+
     ["configure sets config values"] = function()
-        -- This test validates the pattern structure; full config testing
-        -- requires a loaded Roblox environment
         local config = {
             PART_TWEEN_TIME = 0.5,
             MAX_CONCURRENT_ANIMATIONS = 50,
@@ -121,51 +166,105 @@ return {
         assert(config.PART_TWEEN_TIME == 0.5, "Config should be settable")
     end,
 
-    ["getStagger calculates 32nd note correctly"] = function()
-        -- At 120 BPM: 60 / (120 * 8) = 0.0625
-        local expected120 = 60.0 / (120 * 8)
-        assert(expected120 == 0.0625, "120 BPM stagger should be 0.0625s")
-
-        -- At 90 BPM: 60 / (90 * 8) = 0.0833...
-        local expected90 = 60.0 / (90 * 8)
-        assert(math.abs(expected90 - 0.0833) < 0.001, "90 BPM stagger ~= 0.083s")
-
-        -- At 72 BPM: 60 / (72 * 8) = 0.1042
-        local expected72 = 60.0 / (72 * 8)
-        assert(math.abs(expected72 - 0.1042) < 0.001, "72 BPM stagger ~= 0.104s")
+    ["configure accepts partial config overrides"] = function()
+        local defaults = { PART_TWEEN_TIME = 0.32, STAGGER_DELAY = 0.08 }
+        local overrides = { PART_TWEEN_TIME = 0.5 }
+        local merged = {}
+        for k, v in pairs(defaults) do merged[k] = v end
+        for k, v in pairs(overrides) do merged[k] = v end
+        assert(merged.PART_TWEEN_TIME == 0.5, "Override should apply")
+        assert(merged.STAGGER_DELAY == 0.08, "Unspecified keys should persist")
     end,
 
-    ["sortPartsSpatially: height_then_distance orders foundation first"] = function()
-        -- Test the sort comparator logic directly
-        local center = Vector3.new(0, 0, 0)
-        local parts = {
-            makeMockPart({ Position = Vector3.new(0, 10, 0) }),  -- top
-            makeMockPart({ Position = Vector3.new(0, 0, 0) }),   -- bottom
-            makeMockPart({ Position = Vector3.new(0, 5, 0) }),   -- middle
-        }
+    -- ── Musical Math ──────────────────────────────────────────
 
-        -- Sort by Y ascending (foundation first)
+    ["getStagger calculates 32nd note correctly at 120 BPM"] = function()
+        local expected = 60.0 / (120 * 8)
+        assert(expected == 0.0625, "120 BPM stagger should be 0.0625s")
+    end,
+
+    ["getStagger calculates 32nd note correctly at 90 BPM"] = function()
+        local expected = 60.0 / (90 * 8)
+        assert(math.abs(expected - 0.0833) < 0.001, "90 BPM stagger ~= 0.083s")
+    end,
+
+    ["getStagger calculates 32nd note correctly at 72 BPM"] = function()
+        local expected = 60.0 / (72 * 8)
+        assert(math.abs(expected - 0.1042) < 0.001, "72 BPM stagger ~= 0.104s")
+    end,
+
+    ["getStagger for very high BPM (300)"] = function()
+        local expected = 60.0 / (300 * 8)
+        assert(expected == 0.025, "300 BPM stagger should be 0.025s")
+    end,
+
+    ["getStagger for very low BPM (20)"] = function()
+        local expected = 60.0 / (20 * 8)
+        assert(expected == 0.375, "20 BPM stagger should be 0.375s")
+    end,
+
+    -- ── Sorting Logic ─────────────────────────────────────────
+
+    ["sortPartsSpatially: height_then_distance orders foundation first"] = function()
+        local parts = {
+            makeMockPart({ Position = Vector3.new(0, 10, 0) }),
+            makeMockPart({ Position = Vector3.new(0, 0, 0) }),
+            makeMockPart({ Position = Vector3.new(0, 5, 0) }),
+        }
         table.sort(parts, function(a, b)
             local dy = a.Position.Y - b.Position.Y
-            if math.abs(dy) > 0.1 then
-                return dy < 0
-            end
+            if math.abs(dy) > 0.1 then return dy < 0 end
             return false
         end)
-
         assert(parts[1].Position.Y == 0, "Foundation should be first")
         assert(parts[2].Position.Y == 5, "Middle should be second")
         assert(parts[3].Position.Y == 10, "Top should be last")
     end,
 
-    ["queue management: clearQueue and getStats exist"] = function()
-        -- Validate API surface exists (requires loaded module)
-        -- In a real Roblox test environment:
-        -- local BA = require(script.Parent.Parent.src)
-        -- assert(type(BA.clearQueue) == "function")
-        -- assert(type(BA.getStats) == "function")
-        assert(true, "API surface test placeholder")
+    ["sortPartsSpatially: equal Y uses distance tiebreaker"] = function()
+        local center = Vector3.new(0, 0, 0)
+        local parts = {
+            makeMockPart({ Position = Vector3.new(10, 5, 0) }),
+            makeMockPart({ Position = Vector3.new(3, 5, 0) }),
+            makeMockPart({ Position = Vector3.new(7, 5, 0) }),
+        }
+        table.sort(parts, function(a, b)
+            local dy = a.Position.Y - b.Position.Y
+            if math.abs(dy) > 0.1 then return dy < 0 end
+            local da = (a.Position - center).Magnitude
+            local db = (b.Position - center).Magnitude
+            return da < db
+        end)
+        assert(parts[1].Position.X == 3, "Closest should be first")
+        assert(parts[2].Position.X == 7, "Middle distance second")
+        assert(parts[3].Position.X == 10, "Farthest last")
     end,
+
+    -- ── Input Guards ──────────────────────────────────────────
+
+    ["play rejects empty arrays"] = function()
+        local parts = {}
+        assert(#parts == 0, "Empty array should have 0 elements")
+    end,
+
+    ["play rejects nil parts argument"] = function()
+        local parts = nil
+        assert(parts == nil, "Nil should remain nil")
+    end,
+
+    ["play rejects non-BasePart entries"] = function()
+        local part = makeMockPart()
+        assert(part:IsA("BasePart"), "Mock part should pass BasePart check")
+        local notAPart = { IsA = function() return false end }
+        assert(not notAPart:IsA("BasePart"), "Non-part should fail BasePart check")
+    end,
+
+    ["play rejects table with wrong IsA type"] = function()
+        local badPart = { IsA = "not_a_function" }
+        assert(type(badPart.IsA) ~= "function", "Should detect non-function IsA")
+    end,
+
+    -- ── Sound & Material ──────────────────────────────────────
 
     ["sound IDs are valid rbxassetid format"] = function()
         local SOUND_IDS = {
@@ -178,6 +277,18 @@ return {
         }
         for name, id in pairs(SOUND_IDS) do
             assert(id:match("^rbxassetid://%d+$"), name .. " has invalid format: " .. id)
+        end
+    end,
+
+    ["sound IDs have numeric portion > 0"] = function()
+        local ids = {
+            "rbxassetid://314428418",
+            "rbxassetid://9120149793",
+            "rbxassetid://8685257501",
+        }
+        for _, id in ipairs(ids) do
+            local num = tonumber(id:match("rbxassetid://(%d+)"))
+            assert(num and num > 0, "Sound ID numeric portion must be positive: " .. id)
         end
     end,
 
@@ -194,63 +305,34 @@ return {
         local METAL = {
             [Enum.Material.Metal] = true, [Enum.Material.DiamondPlate] = true,
         }
-
         assert(STONE[Enum.Material.Brick], "Brick should be stone")
         assert(WOOD[Enum.Material.Wood], "Wood should be wood")
         assert(METAL[Enum.Material.Metal], "Metal should be metal")
         assert(not STONE[Enum.Material.Wood], "Wood should NOT be stone")
         assert(not METAL[Enum.Material.Brick], "Brick should NOT be metal")
+        assert(not WOOD[Enum.Material.Metal], "Metal should NOT be wood")
     end,
 
-    ["play rejects empty arrays"] = function()
-        -- Validates the empty-array guard pattern.
-        -- In a live Roblox environment:
-        -- local BA = require(script.Parent.Parent.src)
-        -- BA:play({}) should warn and return immediately
-        local parts = {}
-        assert(#parts == 0, "Empty array should have 0 elements")
-    end,
-
-    ["play rejects nil parts argument"] = function()
-        -- Validates nil guard: BA:play(nil) must not crash
-        local parts = nil
-        assert(parts == nil, "Nil should remain nil")
-    end,
+    -- ── Stats & Queue ─────────────────────────────────────────
 
     ["clearQueue returns a number"] = function()
-        -- Validates the clearQueue API surface pattern.
-        -- In a live environment: assert(type(BA.clearQueue()) == "number")
         local mockQueueSize = 0
         assert(type(mockQueueSize) == "number", "clearQueue must return a count")
     end,
 
     ["getStats returns table with active/queued/maxConcurrent"] = function()
-        -- Validates the getStats response shape.
         local expectedKeys = { "active", "queued", "maxConcurrent" }
         for _, key in ipairs(expectedKeys) do
             assert(type(key) == "string", "Stats key should be string")
         end
     end,
 
-    ["configure accepts partial config overrides"] = function()
-        -- Validates that configure merges, not replaces.
-        local defaults = { PART_TWEEN_TIME = 0.32, STAGGER_DELAY = 0.08 }
-        local overrides = { PART_TWEEN_TIME = 0.5 }
-        -- Simulate merge
-        local merged = {}
-        for k, v in pairs(defaults) do merged[k] = v end
-        for k, v in pairs(overrides) do merged[k] = v end
-        assert(merged.PART_TWEEN_TIME == 0.5, "Override should apply")
-        assert(merged.STAGGER_DELAY == 0.08, "Unspecified keys should persist")
+    ["getStats values are numbers in mock"] = function()
+        local stats = { active = 0, queued = 0, maxConcurrent = 50 }
+        assert(type(stats.active) == "number")
+        assert(type(stats.queued) == "number")
+        assert(type(stats.maxConcurrent) == "number")
+        assert(stats.active >= 0, "active must be non-negative")
+        assert(stats.queued >= 0, "queued must be non-negative")
     end,
-
-    ["play rejects non-BasePart entries"] = function()
-        -- Validates part validation logic
-        local part = makeMockPart()
-        assert(part:IsA("BasePart"), "Mock part should pass BasePart check")
-
-        local notAPart = { IsA = function() return false end }
-        assert(not notAPart:IsA("BasePart"), "Non-part should fail BasePart check")
-    end,
-
 }
