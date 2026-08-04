@@ -1,0 +1,23 @@
+{
+  "name": "roblox-build-animator",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "BuildAnimator": {
+        "$path": "src"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "BuildAnimatorDemo": {
+        "$className": "Script",
+        "$properties": {
+          "Disabled": true,
+          "RunContext": "Server"
+        },
+        "$path": "src/Demo.lua"
+      }
+    }
+  }
+}
