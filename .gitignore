@@ -1,7 +1,3 @@
-node_modules/
-*.luac
-*.out
-.roblox/
-*.rbxl
-*.rbxlx.lock
-
+__pycache__/
+*.pyc
+.pytest_cache/

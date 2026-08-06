@@ -96,6 +96,10 @@ local function mkinst(cls)
         X = 0, Y = 0, Z = 0,
     }
     inst._isa[cls] = true
+    if cls == "BindableEvent" then
+        inst.Event = {Connect = function(_, cb) return {Disconnect = function() end} end}
+        inst.Fire = function() end
+    end
     if cls == "Part" or cls == "MeshPart" then
         inst._isa.BasePart = true
         inst._isa.PVInstance = true
@@ -175,6 +179,7 @@ script = {Parent = {}}
 script.Parent.AmbientLayer = mkinst("ModuleScript")
 script.Parent.AmbientLayer.Name = "AmbientLayer"
 
+table.clear = table.clear or function(t) for k in pairs(t) do t[k] = nil end end
 if not table.clone then
     table.clone = function(t)
         local c = {}
@@ -208,6 +213,7 @@ require = function(path)
     return {}
 end
 
+math.clamp = math.clamp or function(v, lo, hi) return math.max(lo, math.min(hi, v)) end
 warn = function() end
 print = function() end
 
